@@ -1,7 +1,7 @@
 {
   "name": "dsh-progressive-tools",
   "description": "Standalone direct-first progressive tool disclosure for every DeepSeek Harness presentation mode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -18,11 +18,11 @@
     "url": "https://github.com/Yan-Zero/dsh-progressive-tools/issues"
   },
   "scripts": {
-    "build": "pnpm run typecheck && tsdown",
+    "build": "tsc -p tsconfig.json && tsdown",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run build",
-    "prepublishOnly": "pnpm --config.minimum-release-age=0 run check"
+    "check": "tsc -p tsconfig.json && vitest run && tsdown",
+    "prepublishOnly": "npm run check"
   },
   "exports": {
     ".": {
@@ -41,7 +41,6 @@
     "lib",
     "src",
     "cordis.patch.yml",
-    "examples",
     "INSTALL.md",
     "README.md",
     "README.zh.md"

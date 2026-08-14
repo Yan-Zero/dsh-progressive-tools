@@ -2,15 +2,14 @@
 
 English | [中文](README.zh.md)
 
-An agent-scoped, presentation-only progressive tool disclosure layer for DeepSeek Harness Native, Code, and Both modes. It keeps the model-visible tool prefix stable while the live ToolRuntime catalog may register, unregister, restrict, or shadow non-eager tools.
+An automatically mounted, presentation-only progressive tool disclosure layer for every DeepSeek Harness Agent preset in Native, Code, and Both modes. It keeps the model-visible tool prefix stable while the live ToolRuntime catalog may register, unregister, restrict, or shadow non-eager tools.
 
 ## Installation and composition
 
-Follow [`INSTALL.md`](INSTALL.md): install this standalone package into a dsh profile, then mount its row inside a user-owned Agent preset. The plugin requires `tools` and `systemPrompt`; `codeRuntime` is required only when that preset actually presents Code Mode. It refuses a global mount and never patches the Harness checkout.
+Follow [`INSTALL.md`](INSTALL.md) and install this standalone bundle into a dsh profile. Its bundle patch mounts the plugin once on the host plane, whose scoped ToolRuntime and SystemPrompt views carry it into every existing and future Agent preset. No preset copy, preset edit, or preset selection is required. The plugin requires `tools` and `systemPrompt`; `codeRuntime` is required only when an agent actually presents Code Mode. It never patches the Harness checkout.
 
 ```yaml
 - id: progressive-tools
-  name: dsh-progressive-tools
   config:
     eagerTools: []
     maxSearchResults: 10
@@ -21,7 +20,7 @@ Follow [`INSTALL.md`](INSTALL.md): install this standalone package into a dsh pr
     maxResultBytes: 1048576
 ```
 
-`eagerTools` contains exact, genuinely stable tools that remain declared directly. Unknown eager names fail assembly. Every count, grapheme, and rendered UTF-8 result limit is enforced before a successful discovery result returns.
+The configuration block above is an optional override in the profile's `cordis.patch.yml`; the bundle already owns the `progressive-tools` row. `eagerTools` contains exact, genuinely stable tools that remain declared directly. Unknown eager names fail assembly. Every count, grapheme, and rendered UTF-8 result limit is enforced before a successful discovery result returns.
 
 ## Stable mode surfaces
 

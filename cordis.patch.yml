@@ -1,1 +1,5 @@
-[]
+# Mount once on the profile host plane. Scoped ToolRuntime and SystemPrompt
+# views carry the projection into every existing and future Agent preset.
+- insert:
+    - id: progressive-tools
+      name: dsh-progressive-tools

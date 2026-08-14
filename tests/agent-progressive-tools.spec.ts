@@ -139,18 +139,32 @@ function directValue(result: Awaited<ReturnType<typeof direct>>) {
 }
 
 describe('dsh-progressive-tools', () => {
-  it('declares its exact dependencies and rejects a global mount', async () => {
+  it('declares its exact dependencies, validates config, and mounts globally', async () => {
     expect(inject).toEqual(['tools', 'systemPrompt'])
     const ctx = new Context()
     await ctx.plugin(SystemPrompt, {})
     await ctx.plugin(ToolRuntime, { mode: 'code' })
     await ctx.plugin(FakeRuntime)
-    const directSession = Session.create(SessionId('direct-config'))
-    const directAgent = { id: directSession.id, session: directSession } as unknown as Agent
-    const directScope = createScope(ctx, directAgent)
-    expect(() => { apply(directScope.ctx, { maxSearchResults: Number.NaN }) }).toThrow(/positive safe integer/)
-    expect(() => { apply(directScope.ctx, { maxDescribeTools: 1.5 }) }).toThrow(/positive safe integer/)
-    expect(() => { apply(ctx, {}) }).toThrow(/must be mounted in an agent or preset scope/)
+    expect(() => { apply(ctx, { maxSearchResults: Number.NaN }) }).toThrow(/positive safe integer/)
+    expect(() => { apply(ctx, { maxDescribeTools: 1.5 }) }).toThrow(/positive safe integer/)
+
+    const row = ctx.plugin({ name, inject: [...inject], Config, apply }, {})
+    await row.await()
+    const plainAfter = await ctx.systemPrompt.assemble()
+    expect(plainAfter.tools.map(tool => tool.name)).toEqual([RUN_CODE_NAME])
+    expect(plainAfter.sections.find(section => section.name === 'tools:progressive-disclosure'))
+      .toBeUndefined()
+
+    const session = Session.create(SessionId('global-mount'))
+    const agent = { id: session.id, session } as unknown as Agent
+    let scope!: Scope
+    await ctx.plugin(Object.assign((inner: Context) => { scope = createScope(inner, agent) },
+      { inject: ['tools', 'systemPrompt'] }))
+    scope.ctx.tools.presentAs('native')
+    const assembly = await ctx.systemPrompt.assemble({ scope: agent })
+    expect(assembly.tools.map(tool => tool.name).sort())
+      .toEqual([DESCRIBE_TOOLS_NAME, SEARCH_TOOLS_NAME].sort())
+    await ctx.fiber.dispose()
   })
 
   it('stabilizes Native wire tools and supports direct-first standard calls without code runtime', async () => {

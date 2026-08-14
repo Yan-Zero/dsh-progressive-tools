@@ -68,8 +68,6 @@ const FixturePlugin = {
       const agent = { id: session.id, session } as unknown as Agent
       const scoped = createScope(ctx, agent)
       scoped.ctx.tools.presentAs(mode)
-      const row = scoped.ctx.plugin(Discovery, { maxSearchResults: 1 })
-      await row.await()
       return { agent, assembly: await ctx.systemPrompt.assemble({ scope: agent }) }
     }
     const code = await mountMode('loader-discovery-code', 'code')
@@ -123,6 +121,10 @@ describe('dsh-progressive-tools real Loader composition', () => {
       "  name: 'test-tools'",
       '  config:',
       '    mode: native',
+      '- id: progressive-tools',
+      '  name: dsh-progressive-tools',
+      '  config:',
+      '    maxSearchResults: 1',
       '- id: fixture',
       "  name: 'test-fixture'",
       '',
@@ -136,6 +138,7 @@ describe('dsh-progressive-tools real Loader composition', () => {
     const modules = new Map<string, unknown>([
       ['test-system-prompt', SystemPrompt],
       ['test-tools', ToolRuntime],
+      ['dsh-progressive-tools', Discovery],
       ['test-fixture', FixturePlugin],
     ])
     ctx.loader.internal = {

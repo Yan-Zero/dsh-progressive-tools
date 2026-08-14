@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-code-runtime'
-import { scopeOf, type ScopeKey } from '@deepseek-ai/dsh-scope'
+import type { ScopeKey } from '@deepseek-ai/dsh-scope'
 import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
 import {
   RUN_CODE_NAME,
@@ -303,9 +303,6 @@ function compactAssembly(
 
 /** Register discovery tools and the all-mode stable presentation projection. */
 export function apply(ctx: Context, config: Config): void {
-  if (scopeOf(ctx) === undefined) {
-    throw new Error('dsh-progressive-tools must be mounted in an agent or preset scope')
-  }
   const resolved = resolveConfig(config)
   const omitted = new Set([...DISCOVERY_NAMES, ...resolved.eagerTools])
   const presentationModes = new WeakMap<object, PresentationMode>()
@@ -467,6 +464,9 @@ export function apply(ctx: Context, config: Config): void {
   // transforming after next() preserves every cooperative inner rewrite.
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
     const assembly = await next()
+    // A host-plane bundle mount sees agentless administrative assemblies too.
+    // They have no presentation mode or execution scope to project.
+    if (context.scope === undefined) return assembly
     return compactAssembly(ctx, assembly, context.scope, resolved.eagerTools, definitions, (scope, mode) => {
       if (scope !== undefined) presentationModes.set(scope, mode)
     })

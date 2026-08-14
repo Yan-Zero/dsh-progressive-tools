@@ -2,15 +2,14 @@
 
 [English](README.md) | 中文
 
-面向 DeepSeek Harness Native、Code 与 Both 模式的 Agent 作用域渐进式工具披露层。它只改变呈现层：即使实时 ToolRuntime 目录注册、注销、限制或遮蔽非 eager 工具，模型可见的工具前缀仍保持稳定。
+面向 DeepSeek Harness Native、Code 与 Both 模式中所有 Agent preset 的自动挂载、渐进式工具披露层。它只改变呈现层：即使实时 ToolRuntime 目录注册、注销、限制或遮蔽非 eager 工具，模型可见的工具前缀仍保持稳定。
 
 ## 安装与组装
 
-按照 [`INSTALL.md`](INSTALL.md) 把这个自包含包安装到 dsh profile，再将配置行挂载到用户自己的 Agent preset。插件固定依赖 `tools` 与 `systemPrompt`；只有实际呈现 Code Mode 时才需要 `codeRuntime`。它拒绝全局挂载，也不会修改 Harness checkout。
+按照 [`INSTALL.md`](INSTALL.md) 把这个自包含 bundle 安装到 dsh profile。bundle patch 会在 host plane 挂载插件一次，再由 ToolRuntime 与 SystemPrompt 的作用域视图将它传递给所有已有和未来的 Agent preset。无需复制、编辑或选择额外 preset。插件固定依赖 `tools` 与 `systemPrompt`；只有 Agent 实际呈现 Code Mode 时才需要 `codeRuntime`。它不会修改 Harness checkout。
 
 ```yaml
 - id: progressive-tools
-  name: dsh-progressive-tools
   config:
     eagerTools: []
     maxSearchResults: 10
@@ -21,7 +20,7 @@
     maxResultBytes: 1048576
 ```
 
-`eagerTools` 只应包含真正稳定、需要直接声明的精确工具名。未知 eager 名称会让 assembly 失败。条目数、字素数和结果 UTF-8 字节上限都会在成功返回前强制执行。
+上述配置块是 profile `cordis.patch.yml` 中的可选覆盖；bundle 已经拥有 `progressive-tools` 行。`eagerTools` 只应包含真正稳定、需要直接声明的精确工具名。未知 eager 名称会让 assembly 失败。条目数、字素数和结果 UTF-8 字节上限都会在成功返回前强制执行。
 
 ## 各模式的稳定表面
 
