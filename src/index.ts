@@ -4,7 +4,6 @@
  * @module dsh-progressive-tools
  */
 
-import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-code-runtime'
@@ -90,8 +89,6 @@ type PresentationMode = 'native' | 'code' | 'both'
 interface SearchMatch {
   name: string
   description: string
-  parameters: JsonValue
-  output: JsonValue
   score: number
 }
 
@@ -140,11 +137,6 @@ function catalog(ctx: Context, scope: ScopeKey | undefined, omitted: ReadonlySet
     })
   }
   return result.sort((left, right) => left.name.localeCompare(right.name, 'en'))
-}
-
-/** Content digest identifying the exact scoped catalog a result describes. */
-function catalogVersion(tools: readonly CatalogTool[]): string {
-  return 'sha256:' + createHash('sha256').update(JSON.stringify(tools)).digest('hex')
 }
 
 /** Character-safe summary bound for model-facing search results. */
@@ -234,9 +226,9 @@ function discoveryInstructions(mode: PresentationMode): string {
   return [
     '## Progressive tool disclosure',
     '',
-    'search_tools returns exact names, descriptions, input schemas, and output schemas for the current scoped catalog.',
+    'Use search_tools to find candidate names and summaries, then call describe_tools with the exact names you intend to use.',
+    'describe_tools returns the exact input and output schemas; in Code Mode it also returns the active-runtime SDK excerpt.',
     invocation,
-    'describe_tools remains available for exact-name batch lookup and returns an SDK excerpt only when Code Mode is active.',
     '',
     'Do not invent tool names or arguments. A standard call to an unavailable, restricted, or removed tool is expected to fail with the current ToolRuntime reason.',
     'Discovery changes presentation only: permission, approval, guards, scheduling, and auditing remain authoritative at execution time.',
@@ -311,7 +303,7 @@ export function apply(ctx: Context, config: Config): void {
 
   const searchTool = defineTool({
     name: SEARCH_TOOLS_NAME,
-    description: 'Search the current scoped catalog and return matching tool names with exact input/output schemas.',
+    description: 'Search the current scoped catalog and return lightweight matching tool names and summaries.',
     parameters: {
       query: { type: 'string', required: true, description: 'Capability words to match against tool names, descriptions, and input schemas; use * to list the bounded catalog.' },
       limit: { type: 'integer', description: 'Maximum matches to return, capped by plugin configuration.' },
@@ -321,9 +313,6 @@ export function apply(ctx: Context, config: Config): void {
         type: 'object',
         additionalProperties: false,
         properties: {
-          catalogVersion: { type: 'string', required: true },
-          presentationMode: { type: 'string', required: true },
-          query: { type: 'string', required: true },
           total: { type: 'integer', required: true },
           truncated: { type: 'boolean', required: true },
           matches: {
@@ -335,8 +324,6 @@ export function apply(ctx: Context, config: Config): void {
               properties: {
                 name: { type: 'string', required: true },
                 description: { type: 'string', required: true },
-                parameters: { type: 'json', required: true },
-                output: { type: 'json', required: true },
               },
             },
           },
@@ -357,16 +344,11 @@ export function apply(ctx: Context, config: Config): void {
         .map(tool => ({
           name: tool.name,
           description: summarize(tool.description, resolved.maxSummaryChars),
-          parameters: structuredClone(tool.parameters) as unknown as JsonValue,
-          output: structuredClone(tool.output) as unknown as JsonValue,
           score: relevance(tool, lowerQuery),
         }))
         .filter(match => match.score > 0)
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name, 'en'))
       return Promise.resolve(boundedResult({
-        catalogVersion: catalogVersion(tools),
-        presentationMode: modeFor(exec.agent, exec.parent !== undefined),
-        query,
         total: matches.length,
         truncated: matches.length > limit,
         matches: matches.slice(0, limit).map(({ score: _score, ...match }) => match),
@@ -386,8 +368,6 @@ export function apply(ctx: Context, config: Config): void {
         type: 'object',
         additionalProperties: false,
         properties: {
-          catalogVersion: { type: 'string', required: true },
-          presentationMode: { type: 'string', required: true },
           tools: {
             type: 'array',
             required: true,
@@ -430,8 +410,6 @@ export function apply(ctx: Context, config: Config): void {
       }
       const selected = names.map(toolName => byName.get(toolName) as CatalogTool)
       const result = {
-        catalogVersion: catalogVersion(tools),
-        presentationMode: modeFor(exec.agent, exec.parent !== undefined),
         tools: selected.map(tool => ({
           name: tool.name,
           description: tool.description,
@@ -439,7 +417,7 @@ export function apply(ctx: Context, config: Config): void {
           output: structuredClone(tool.output) as unknown as JsonValue,
         })),
       }
-      if (result.presentationMode === 'native') {
+      if (modeFor(exec.agent, exec.parent !== undefined) === 'native') {
         return Promise.resolve(boundedResult(result, resolved.maxResultBytes, DESCRIBE_TOOLS_NAME))
       }
       const rendered = renderSdk(ctx, selected)

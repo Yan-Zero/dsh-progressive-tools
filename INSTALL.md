@@ -41,7 +41,7 @@ Defaults require no profile edits. To override them, target the bundle-owned row
 
 ## 3. Verify
 
-Start a new session with any Agent preset. Native exposes `search_tools` and `describe_tools`; Code keeps only `run_code` on the wire and exposes the discovery bindings in its compact SDK; Both exposes the stable transports for both paths. Non-eager schemas arrive through `search_tools` results.
+Start a new session with any Agent preset. Native exposes `search_tools` and `describe_tools`; Code keeps only `run_code` on the wire and exposes the discovery bindings in its compact SDK; Both exposes the stable transports for both paths. Search returns lightweight candidates, and non-eager schemas arrive only through `describe_tools`.
 
 To uninstall:
 

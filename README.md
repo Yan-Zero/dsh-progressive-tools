@@ -24,7 +24,7 @@ The configuration block above is an optional override in the profile's `cordis.p
 
 ## Stable mode surfaces
 
-| Effective mode | Stable model-visible tools | Invocation after search |
+| Effective mode | Stable model-visible tools | Invocation after describe |
 | --- | --- | --- |
 | Native | `search_tools`, `describe_tools`, eager tools | ordinary tool call with the returned exact name and arguments |
 | Code | `run_code`; its SDK declares discovery and eager bindings | `tools[exactName](arguments)` inside a later `run_code` |
@@ -34,12 +34,12 @@ There is deliberately no `invoke_tool`. Search supplies knowledge; execution rem
 
 ## Discovery protocol
 
-1. Call `search_tools({ query, limit? })` directly in Native/Both, or as a Code binding in Code mode. `*` lists the bounded catalog. Every match includes the exact `name`, bounded `description`, `parameters`, and `output` schema.
-2. On a later model step, Native/Both emits an ordinary tool call using that exact name and arguments even though the stable wire list does not repeat the schema. Code calls `tools[exactName](arguments)` from a later `run_code`.
-3. ToolRuntime resolves the current scoped registry at execution time. Existing visible tools run normally; removed, restricted, shadowed, or misspelled names return the current failure reason.
-4. `describe_tools({ names })` remains an optional exact-name batch lookup. It returns canonical schemas in every mode and adds the active runtime SDK excerpt only for Code/Both.
+1. Call `search_tools({ query, limit? })` directly in Native/Both, or as a Code binding in Code mode. `*` lists the bounded catalog. Each lightweight match contains only the exact `name` and a bounded `description`.
+2. Call `describe_tools({ names })` for the candidates you intend to use. It returns their canonical input/output schemas and full descriptions; Code/Both also receives the active-runtime SDK excerpt.
+3. On a later model step, Native/Both emits an ordinary tool call using that exact name and arguments even though the stable wire list does not repeat the schema. Code calls `tools[exactName](arguments)` from a later `run_code`.
+4. ToolRuntime resolves the current scoped registry at execution time. Existing visible tools run normally; removed, restricted, shadowed, or misspelled names return the current failure reason.
 
-Every result includes `catalogVersion`, a SHA-256 digest of the sorted current scoped catalog, plus `presentationMode`. Search and describe use `ctx.tools.schemas(exec.agent)` and `ctx.tools.get(name, exec.agent)` on every call.
+Search and describe use `ctx.tools.schemas(exec.agent)` and `ctx.tools.get(name, exec.agent)` on every call. Their model-facing results omit internal catalog and presentation metadata that is not needed for the next action.
 
 The protocol is stateless: search does not unlock a capability, no reveal set changes future assemblies, and the complete runtime catalog remains the execution authority.
 
@@ -50,18 +50,19 @@ The protocol is stateless: search does not unlock a capability, no reveal set ch
 ```markdown
 ## Progressive tool disclosure
 
-search_tools returns exact names, descriptions, input schemas, and output schemas.
+search_tools returns lightweight candidate names and summaries.
+Call describe_tools for exact input and output schemas before using a candidate.
 On a later model step, issue an ordinary tool call with the returned exact name and arguments.
 An unavailable call fails with the current ToolRuntime reason.
 ```
 
 ### Code
 
-The wire remains `run_code`; its compact SDK contains only `search_tools`, `describe_tools`, and eager bindings. Search returns exact target schemas, and a later program calls `tools[exactName](arguments)`.
+The wire remains `run_code`; its compact SDK contains only `search_tools`, `describe_tools`, and eager bindings. Search narrows the catalog, describe returns exact target schemas and an SDK excerpt, and a later program calls `tools[exactName](arguments)`.
 
 ### Token and KV-cache effect
 
-The stable prefix scales with discovery declarations plus `eagerTools`, not the complete visible catalog. Registering or unregistering a non-eager tool changes only later discovery results and `catalogVersion`; it does not change the projected wire tools or compact SDK. This directly addresses dynamic-tool prefix invalidation such as [deepseek-harness discussion #935](https://github.com/deepseek-ai/deepseek-harness/discussions/935).
+The stable prefix scales with discovery declarations plus `eagerTools`, not the complete visible catalog. Registering or unregistering a non-eager tool changes only later discovery results; it does not change the projected wire tools or compact SDK. This directly addresses dynamic-tool prefix invalidation such as [deepseek-harness discussion #935](https://github.com/deepseek-ai/deepseek-harness/discussions/935).
 
 ## Known limitations
 

@@ -1,6 +1,6 @@
 /**
  * Direct-first progressive discovery across Native, Code, and Both: stable
- * model surfaces, schema-rich search, ordinary native calls, unchanged Code
+ * model surfaces, lightweight search, exact describe, ordinary native calls, unchanged Code
  * dispatch, strict bounds, and effect-owned cleanup.
  */
 
@@ -176,21 +176,17 @@ describe('dsh-progressive-tools', () => {
     expect(mounted.ctx.get('codeRuntime')).toBeUndefined()
 
     const search = directValue(await direct(mounted, SEARCH_TOOLS_NAME, { query: 'web' })) as {
-      presentationMode: string
-      matches: { name: string; parameters: unknown; output: unknown }[]
+      matches: { name: string; description: string }[]
     }
-    expect(search.presentationMode).toBe('native')
-    expect(search.matches).toEqual([expect.objectContaining({
+    expect(search.matches).toEqual([{
       name: 'web_search',
-      parameters: expect.objectContaining({ type: 'object' }),
-      output: expect.objectContaining({ type: 'array' }),
-    })])
+      description: 'Search current web information with an intentionally long summary.',
+    }])
     expect(directValue(await direct(mounted, 'web_search', { query: 'native' }))).toEqual(['native'])
 
     const missing = await direct(mounted, 'not_a_real_tool', {})
     expect(missing).toMatchObject({ isError: true, error: { info: { code: 'UNKNOWN_TOOL' } } })
     const described = directValue(await direct(mounted, DESCRIBE_TOOLS_NAME, { names: ['web_search'] })) as Record<string, unknown>
-    expect(described.presentationMode).toBe('native')
     expect(described).not.toHaveProperty('sdk')
     expect(described).not.toHaveProperty('language')
   })
@@ -205,8 +201,8 @@ describe('dsh-progressive-tools', () => {
     expect(sdk).toContain('ordinary tool call')
     expect(sdk).toContain(SEARCH_TOOLS_NAME)
     expect(sdk).not.toContain('web_search')
-    const search = directValue(await direct(mounted, SEARCH_TOOLS_NAME, { query: 'web' })) as { presentationMode: string }
-    expect(search.presentationMode).toBe('both')
+    const search = directValue(await direct(mounted, SEARCH_TOOLS_NAME, { query: 'web' })) as { matches: { name: string }[] }
+    expect(search.matches.map(match => match.name)).toEqual(['web_search'])
     expect(directValue(await direct(mounted, 'web_search', { query: 'both' }))).toEqual(['both'])
   })
 
@@ -214,7 +210,7 @@ describe('dsh-progressive-tools', () => {
     const mounted = await mount({}, { mode: 'native', runtime: false })
     const before = await mounted.ctx.systemPrompt.assemble({ scope: mounted.agent })
     const prefix = JSON.stringify({ sections: before.sections, tools: before.tools })
-    const initial = directValue(await direct(mounted, SEARCH_TOOLS_NAME, { query: 'probe' })) as { catalogVersion: string; total: number }
+    const initial = directValue(await direct(mounted, SEARCH_TOOLS_NAME, { query: 'probe' })) as { total: number }
     expect(initial.total).toBe(0)
 
     const dispose = mounted.ctx.tools.register(defineTool({
@@ -227,14 +223,12 @@ describe('dsh-progressive-tools', () => {
     const added = await mounted.ctx.systemPrompt.assemble({ scope: mounted.agent })
     expect(JSON.stringify({ sections: added.sections, tools: added.tools })).toBe(prefix)
     const found = directValue(await direct(mounted, SEARCH_TOOLS_NAME, { query: 'probe' })) as {
-      catalogVersion: string
-      matches: { name: string; parameters: unknown }[]
+      matches: { name: string; description: string }[]
     }
-    expect(found.catalogVersion).not.toBe(initial.catalogVersion)
-    expect(found.matches).toEqual([expect.objectContaining({
+    expect(found.matches).toEqual([{
       name: 'win_terminal_probe',
-      parameters: expect.objectContaining({ type: 'object' }),
-    })])
+      description: 'Probe one terminal capability.',
+    }])
     expect(directValue(await direct(mounted, 'win_terminal_probe', { target: 'pwsh' }))).toBe('probe:pwsh')
 
     dispose()
@@ -302,22 +296,15 @@ describe('dsh-progressive-tools', () => {
   it('searches the current scoped catalog deterministically with complete-result bounds', async () => {
     const mounted = await mount({ maxSearchResults: 1, maxSummaryChars: 12 })
     const result = valueOf(await nested(mounted, SEARCH_TOOLS_NAME, { query: '*', limit: 99 })) as {
-      catalogVersion: string
-      presentationMode: string
       total: number
       truncated: boolean
-      matches: { name: string; description: string; parameters: unknown; output: unknown }[]
+      matches: { name: string; description: string }[]
     }
-    expect(result.catalogVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
-    expect(result.total).toBe(3)
-    expect(result.truncated).toBe(true)
-    expect(result.matches).toEqual([expect.objectContaining({
-      name: 'read_file',
-      description: 'Read one UTF…',
-      parameters: expect.objectContaining({ type: 'object' }),
-      output: expect.objectContaining({ type: 'object' }),
-    })])
-    expect(result.presentationMode).toBe('code')
+    expect(result).toEqual({
+      total: 3,
+      truncated: true,
+      matches: [{ name: 'read_file', description: 'Read one UTF…' }],
+    })
 
     const exact = valueOf(await nested(mounted, SEARCH_TOOLS_NAME, { query: 'web current' })) as {
       matches: { name: string }[]
@@ -328,7 +315,6 @@ describe('dsh-progressive-tools', () => {
   it('describes exact schemas and the active runtime SDK excerpt', async () => {
     const mounted = await mount({ maxDescribeTools: 2 })
     const result = valueOf(await nested(mounted, DESCRIBE_TOOLS_NAME, { names: ['web_search', 'read_file'] })) as {
-      catalogVersion: string
       tools: { name: string; parameters: unknown; output: unknown }[]
       language: string
       sdk: string
