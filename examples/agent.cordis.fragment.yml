@@ -1,0 +1,11 @@
+# Mount inside a Native, Code, or Both agent preset; never at the profile root.
+- id: progressive-tools
+  name: dsh-progressive-tools
+  config:
+    eagerTools: []
+    maxSearchResults: 10
+    maxDescribeTools: 5
+    maxSummaryChars: 240
+    maxQueryChars: 500
+    maxToolNameChars: 200
+    maxResultBytes: 1048576
