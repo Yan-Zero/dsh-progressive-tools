@@ -217,8 +217,12 @@ describe('dsh-progressive-tools', () => {
     const mounted = await mount({}, { mode: 'native', runtime: false })
     const before = await mounted.ctx.systemPrompt.assemble({ scope: mounted.agent })
     const prefix = JSON.stringify({ sections: before.sections, tools: before.tools })
-    const initial = directValue(await direct(mounted, SEARCH_TOOLS_NAME, { query: 'probe' })) as { total: number }
-    expect(initial.total).toBe(0)
+    const initial = directValue(await direct(mounted, SEARCH_TOOLS_NAME, { query: 'probe' })) as {
+      total: number
+      matches: { name: string }[]
+    }
+    expect(initial.total).toBe(3)
+    expect(initial.matches.map(match => match.name)).toEqual(['read_file', 'web_search', 'write_file'])
 
     const dispose = mounted.ctx.tools.register(defineTool({
       name: 'win_terminal_probe',
@@ -319,6 +323,39 @@ describe('dsh-progressive-tools', () => {
     expect(exact.matches.map(match => match.name)).toEqual(['web_search'])
   })
 
+  it('lists the lightweight catalog by default and makes verbose searches non-blocking', async () => {
+    const mounted = await mount({ maxSearchResults: 1 })
+    mounted.ctx.tools.register(defineTool({
+      name: 'pwsh',
+      description: 'Run a PowerShell command in the current working directory and inspect filesystem folders.',
+      parameters: { command: { type: 'string', required: true, description: 'PowerShell command such as pwd or listing directories.' } },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+      execute: () => Promise.resolve('ok'),
+    }))
+
+    const catalog = valueOf(await nested(mounted, SEARCH_TOOLS_NAME, {})) as {
+      total: number
+      truncated: boolean
+      matches: { name: string; description: string }[]
+    }
+    expect(catalog.total).toBe(4)
+    expect(catalog.truncated).toBe(false)
+    expect(catalog.matches.map(match => match.name)).toEqual(['pwsh', 'read_file', 'web_search', 'write_file'])
+    expect(catalog.matches.every(match => Object.keys(match).join(',') === 'name,description')).toBe(true)
+
+    const verbose = valueOf(await nested(mounted, SEARCH_TOOLS_NAME, {
+      query: 'pwd current working directory list directories count folders filesystem',
+      limit: 10,
+    })) as { matches: { name: string }[] }
+    expect(verbose.matches.map(match => match.name)).toEqual(['pwsh'])
+
+    const fallback = valueOf(await nested(mounted, SEARCH_TOOLS_NAME, {
+      query: 'quantum-entanglement capability that does not exist',
+    })) as { total: number; matches: { name: string }[] }
+    expect(fallback.total).toBe(4)
+    expect(fallback.matches.map(match => match.name)).toEqual(['pwsh', 'read_file', 'web_search', 'write_file'])
+  })
+
   it('describes exact schemas and the active runtime SDK excerpt', async () => {
     const mounted = await mount({ maxDescribeTools: 2 })
     const result = valueOf(await nested(mounted, DESCRIBE_TOOLS_NAME, { names: ['web_search', 'read_file'] })) as {
@@ -342,7 +379,7 @@ describe('dsh-progressive-tools', () => {
     expect((await nested(mounted, DESCRIBE_TOOLS_NAME, { names: ['read_file', 'read_file'] })).isError).toBe(true)
     expect((await nested(mounted, DESCRIBE_TOOLS_NAME, { names: ['read_file', 'web_search'] })).isError).toBe(true)
     const byteBounded = await mount({ maxResultBytes: 10 })
-    expect((await nested(byteBounded, SEARCH_TOOLS_NAME, { query: '*' })).isError).toBe(true)
+    expect((await nested(byteBounded, SEARCH_TOOLS_NAME, { query: '*' })).isError).toBe(false)
     expect((await nested(byteBounded, DESCRIBE_TOOLS_NAME, { names: ['read_file'] })).isError).toBe(true)
   })
 

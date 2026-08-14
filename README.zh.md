@@ -35,12 +35,12 @@
 
 ## 发现协议
 
-1. Native/Both 直接调用 `search_tools({ query, limit? })`，Code 则把它作为 Code binding 调用。`*` 会列出有界目录。每个轻量匹配只包含精确 `name` 与有界 `description`。
+1. Native/Both 直接调用 `search_tools({})` 或 `search_tools({ query: "*" })`，Code 则把它作为 Code binding 调用，以列出完整轻量目录。与 Harness Skills 的“摘要优先”形态一致，每项只包含精确 `name` 与有界 `description`。文本查询只是可选的排序过滤器：各查询词独立匹配，不再要求全部命中；零命中时自动退回完整目录。需要时仍可显式传入 `limit` 缩小响应。
 2. 对准备使用的候选项调用 `describe_tools({ names })`。它返回完整描述和 canonical 输入/输出 schema；Code/Both 还会获得当前 runtime 的 SDK 片段。
 3. 后续模型步骤中，原生支持的 API 使用该精确名称与参数发起普通工具调用。插件从持久化请求历史重建成功的 `describe_tools` 结果，并把 schema 注入对应 tool-result 位置。不支持该能力的 Native API 使用稳定的 `invoke_tool({ name, arguments })` 兜底。Code 在后续 `run_code` 中调用 `tools[exactName](arguments)`。
 4. 执行时 ToolRuntime 重新解析当前作用域目录。仍存在且可见的工具正常运行；已删除、受限、被遮蔽或拼错的名称返回当前失败原因。
 
-搜索与描述每次都使用 `ctx.tools.schemas(exec.agent)` 和 `ctx.tools.get(name, exec.agent)`；面向模型的结果不再携带下一步操作不需要的内部目录与呈现元数据。
+搜索与描述每次都使用 `ctx.tools.schemas(exec.agent)` 和 `ctx.tools.get(name, exec.agent)`。Search 只返回 `name`、`description` 与紧凑计数元数据；describe 只为选中的名称返回精确 schema。两者都不会暴露内部目录或呈现元数据。
 
 协议不维护可变 reveal 集合：搜索不会解锁能力，完整实时目录仍是执行权威。每次请求都会从已记录的 `describe_tools` 调用/结果对重建 Native 披露。
 
@@ -55,8 +55,9 @@ Harness 请求对象保持冻结与只读。插件通过公开的 `llm/stream` w
 ```markdown
 ## Progressive tool disclosure
 
-search_tools returns lightweight candidate names and summaries.
-Call describe_tools for exact input and output schemas before using a candidate.
+Start with search_tools({}) or search_tools({ query: "*" }) when you need the complete lightweight catalog of all available names and summaries. A text query is only an optional ranking filter and falls back to that catalog when nothing matches.
+Call describe_tools with only the exact names you intend to use.
+describe_tools returns the exact input and output schemas; in Code Mode it also returns the active-runtime SDK excerpt.
 On a later model step, issue an ordinary tool call with the returned exact name and arguments.
 If the interface declares invoke_tool instead, pass it that exact name and arguments.
 An unavailable call fails with the current ToolRuntime reason.
@@ -64,7 +65,7 @@ An unavailable call fails with the current ToolRuntime reason.
 
 ### Code
 
-线路仍只有 `run_code`；紧凑 SDK 只包含 `search_tools`、`describe_tools` 与 eager binding。搜索先缩小目录，描述再返回目标精确 schema 与 SDK 片段，后续程序调用 `tools[exactName](arguments)`。
+线路仍只有 `run_code`；紧凑 SDK 只包含 `search_tools`、`describe_tools` 与 eager binding。Search 会列出轻量目录或按需排序，describe 再返回目标精确 schema 与 SDK 片段，后续程序调用 `tools[exactName](arguments)`。
 
 ### Token 与 KV Cache 影响
 
@@ -77,7 +78,7 @@ An unavailable call fails with the current ToolRuntime reason.
 - **呈现不是授权** —— 已知精确名称的调用方可以尝试调用；ToolRuntime 的可见性、policy、approval、guard 与调度仍是最终权威。
 - **不会过滤独立 `tool:*` guidance** —— 若其他插件动态改变单独指引文本，system prefix 仍可能变化。
 - **完整提示仍是最终权威** —— Harness 会在 assembly waterfall 后恢复 complete prompt，因此无法向其中注入发现指引，但稳定 wire 投影仍保留。
-- **搜索是确定性词法匹配，不是语义检索。**
+- **搜索是宽松、确定性的词法排序，不是语义检索。** 独立词匹配、标识符拆分和少量英文复数归一化可以提升召回率；没有任何词法候选时会返回完整轻量目录，而不是留下空结果死路。
 - **每个作用域假定只有一个协作式呈现所有者** —— 两个都改写最终工具表面的插件没有合并契约。
 
 ## 许可证

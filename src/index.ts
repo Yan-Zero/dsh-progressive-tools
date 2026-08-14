@@ -33,7 +33,7 @@ const DISCOVERY_NAMES = new Set([RUN_CODE_NAME, SEARCH_TOOLS_NAME, DESCRIBE_TOOL
 export interface Config {
   /** Stable non-discovery tools declared eagerly on the projected model surface. */
   eagerTools?: string[]
-  /** Maximum matches one search may return. */
+  /** Maximum filtered matches, or explicitly limited catalog entries, one search may return. */
   maxSearchResults?: number
   /** Maximum exact tool definitions one describe call may return. */
   maxDescribeTools?: number
@@ -43,7 +43,7 @@ export interface Config {
   maxQueryChars?: number
   /** Maximum characters accepted in one exact tool name. */
   maxToolNameChars?: number
-  /** Maximum UTF-8 bytes in either discovery tool's rendered JSON result. */
+  /** Maximum UTF-8 bytes in one exact-schema describe result. */
   maxResultBytes?: number
 }
 
@@ -157,21 +157,62 @@ function summarize(text: string, maxChars: number): string {
   return characters.length <= maxChars ? text : characters.slice(0, maxChars).join('') + '…'
 }
 
-/** Deterministic lexical relevance; zero means the tool does not match. */
+/** Normalize prose and identifiers into one deterministic lexical surface. */
+function searchableText(text: string): string {
+  return text
+    .normalize('NFKC')
+    .replace(/([\p{Ll}\d])(\p{Lu})/gu, '$1 $2')
+    .toLocaleLowerCase('en-US')
+}
+
+/** Extract useful query/index terms without making stop words hard requirements. */
+function lexicalTerms(text: string): string[] {
+  return [...new Set(searchableText(text).split(/[^\p{L}\p{N}]+/u).filter(term => term.length > 1))]
+}
+
+/** Small deterministic English inflection expansion, not a semantic synonym table. */
+function termForms(term: string): string[] {
+  const forms = new Set([term])
+  if (/^[a-z]+$/u.test(term)) {
+    if (term.length > 4 && term.endsWith('ies')) forms.add(term.slice(0, -3) + 'y')
+    if (term.length > 3 && term.endsWith('es')) forms.add(term.slice(0, -2))
+    if (term.length > 3 && term.endsWith('s')) forms.add(term.slice(0, -1))
+  }
+  return [...forms]
+}
+
+/** Deterministic relaxed lexical relevance; any useful term may produce a candidate. */
 function relevance(tool: CatalogTool, query: string): number {
   if (query === '*') return 1
-  const terms = query.split(/\s+/u).filter(Boolean)
-  const name = tool.name.toLocaleLowerCase('en-US')
-  const description = tool.description.toLocaleLowerCase('en-US')
-  const schema = JSON.stringify(tool.parameters).toLocaleLowerCase('en-US')
-  if (terms.some(term => !name.includes(term) && !description.includes(term) && !schema.includes(term))) return 0
+  const terms = lexicalTerms(query)
+  if (terms.length === 0) return 0
+  const name = searchableText(tool.name)
+  const description = searchableText(tool.description)
+  const schema = searchableText(JSON.stringify(tool.parameters))
+  const nameTerms = new Set(lexicalTerms(name))
+  const descriptionTerms = new Set(lexicalTerms(description))
+  const schemaTerms = new Set(lexicalTerms(schema))
   let score = name === query ? 1_000 : name.startsWith(query) ? 500 : name.includes(query) ? 250 : 0
+  let matchedTerms = 0
   for (const term of terms) {
-    if (name.includes(term)) score += 25
-    if (description.includes(term)) score += 5
-    if (schema.includes(term)) score += 1
+    const forms = termForms(term)
+    const exactName = forms.some(form => nameTerms.has(form))
+    const partialName = !exactName && forms.some(form => form.length > 2 && name.includes(form))
+    const exactDescription = forms.some(form => descriptionTerms.has(form))
+    const partialDescription = !exactDescription && forms.some(form => form.length > 2 && description.includes(form))
+    const exactSchema = forms.some(form => schemaTerms.has(form))
+    const partialSchema = !exactSchema && forms.some(form => form.length > 2 && schema.includes(form))
+    if (exactName) score += 100
+    else if (partialName) score += 60
+    if (exactDescription) score += 30
+    else if (partialDescription) score += 15
+    if (exactSchema) score += 8
+    else if (partialSchema) score += 3
+    if (exactName || partialName || exactDescription || partialDescription || exactSchema || partialSchema) {
+      matchedTerms += 1
+    }
   }
-  return score
+  return matchedTerms === 0 ? 0 : score + Math.round(100 * matchedTerms / terms.length)
 }
 
 /** Enforce the configured complete rendered-result byte bound. */
@@ -183,14 +224,13 @@ function boundedResult<T>(value: T, maxBytes: number, toolName: string): T {
   return value
 }
 
-/** Validate and normalize one model-written search query. */
-function queryText(query: string, maxChars: number): string {
-  const normalized = query.trim()
-  if (normalized.length === 0) throw new Error('search_tools query must not be blank')
+/** Validate and normalize one model-written search query; blank means catalog listing. */
+function queryText(query: string | undefined, maxChars: number): string {
+  const normalized = query?.trim() ?? ''
   if (graphemes(normalized).length > maxChars) {
     throw new Error(`search_tools query exceeds the configured ${String(maxChars)}-character limit`)
   }
-  return normalized
+  return normalized.length === 0 ? '*' : searchableText(normalized)
 }
 
 /** SDK schema shape consumed by both first-party renderers. */
@@ -230,7 +270,8 @@ function discoveryInstructions(mode: PresentationMode): string {
   return [
     '## Progressive tool disclosure',
     '',
-    'Use search_tools to find candidate names and summaries, then call describe_tools with the exact names you intend to use.',
+    'Start with search_tools({}) or search_tools({ query: "*" }) when you need the complete lightweight catalog of all available names and summaries. A text query is only an optional ranking filter and falls back to that catalog when nothing matches.',
+    'Call describe_tools with only the exact names you intend to use.',
     'describe_tools returns the exact input and output schemas; in Code Mode it also returns the active-runtime SDK excerpt.',
     invocation,
     '',
@@ -315,10 +356,10 @@ export function apply(ctx: Context, config: Config): void {
 
   const searchTool = defineTool({
     name: SEARCH_TOOLS_NAME,
-    description: 'Search the current scoped catalog and return lightweight matching tool names and summaries.',
+    description: 'List or loosely search all available tools by lightweight name and description; schemas remain hidden until describe_tools.',
     parameters: {
-      query: { type: 'string', required: true, description: 'Capability words to match against tool names, descriptions, and input schemas; use * to list the bounded catalog.' },
-      limit: { type: 'integer', description: 'Maximum matches to return, capped by plugin configuration.' },
+      query: { type: 'string', description: 'Optional capability words ranked independently (OR), not all required; omit or use * for the complete lightweight catalog.' },
+      limit: { type: 'integer', description: 'Optional page size; explicit values are capped by plugin configuration.' },
     },
     output: {
       schema: {
@@ -349,31 +390,38 @@ export function apply(ctx: Context, config: Config): void {
       if (args.limit !== undefined && (!Number.isSafeInteger(args.limit) || args.limit < 1)) {
         throw new Error('search_tools limit must be a positive safe integer')
       }
-      const limit = Math.min(args.limit ?? resolved.maxSearchResults, resolved.maxSearchResults)
       const tools = catalog(ctx, exec.agent, omitted)
-      const lowerQuery = query.toLocaleLowerCase('en-US')
-      const matches: SearchMatch[] = tools
+      const catalogMatches: SearchMatch[] = tools.map(tool => ({
+        name: tool.name,
+        description: summarize(tool.description, resolved.maxSummaryChars),
+        score: 1,
+      }))
+      const ranked: SearchMatch[] = query === '*' ? [] : tools
         .map(tool => ({
           name: tool.name,
           description: summarize(tool.description, resolved.maxSummaryChars),
-          score: relevance(tool, lowerQuery),
+          score: relevance(tool, query),
         }))
         .filter(match => match.score > 0)
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name, 'en'))
-      return Promise.resolve(boundedResult({
+      const matches = ranked.length > 0 ? ranked : catalogMatches
+      const limit = args.limit === undefined
+        ? ranked.length > 0 ? resolved.maxSearchResults : matches.length
+        : Math.min(args.limit, resolved.maxSearchResults)
+      return Promise.resolve({
         total: matches.length,
         truncated: matches.length > limit,
         matches: matches.slice(0, limit).map(({ score: _score, ...match }) => match),
-      }, resolved.maxResultBytes, SEARCH_TOOLS_NAME))
+      })
     },
-    presentCall: args => ({ card: 'generic', title: 'Search tools', kind: 'read', rawInput: summarize(args.query, 100) }),
+    presentCall: args => ({ card: 'generic', title: 'Search tools', kind: 'read', rawInput: summarize(args.query?.trim() || '*', 100) }),
   })
 
   const describeTool = defineTool({
     name: DESCRIBE_TOOLS_NAME,
     description: 'Return exact schemas for named tools and, in Code or Both mode, the active-runtime SDK excerpt.',
     parameters: {
-      names: { type: 'array', required: true, items: { type: 'string' }, description: 'Exact tool names returned by search_tools.' },
+      names: { type: 'array', required: true, items: { type: 'string' }, description: 'Exact tool names returned by the search_tools catalog or ranking.' },
     },
     output: {
       schema: {

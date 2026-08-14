@@ -162,7 +162,11 @@ describe('dsh-progressive-tools real Loader composition', () => {
     expect(state?.sdk).toContain(Discovery.SEARCH_TOOLS_NAME)
     expect(state?.sdk).toContain(Discovery.DESCRIBE_TOOLS_NAME)
     expect(state?.sdk).not.toContain('fixture_weather')
-    expect(state?.search).toMatchObject({ total: 2, truncated: true, matches: [{ name: 'fixture_weather' }] })
+    expect(state?.search).toMatchObject({
+      total: 2,
+      truncated: false,
+      matches: [{ name: 'fixture_weather' }, { name: 'fixture_write' }],
+    })
     expect(state?.hidden).toBe('sunny:Paris')
     expect(state?.hasRunCode).toBe(true)
     expect(state?.nativeWire.toSorted()).toEqual([Discovery.SEARCH_TOOLS_NAME, Discovery.DESCRIBE_TOOLS_NAME, Discovery.INVOKE_TOOL_NAME].sort())
