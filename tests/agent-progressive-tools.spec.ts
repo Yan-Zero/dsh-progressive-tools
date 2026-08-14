@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { CallId } from '@deepseek-ai/dsh-llm'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import type { Scope } from '@deepseek-ai/dsh-scope'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -19,6 +19,7 @@ import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import {
   Config,
   DESCRIBE_TOOLS_NAME,
+  INVOKE_TOOL_NAME,
   SEARCH_TOOLS_NAME,
   apply,
   inject,
@@ -54,6 +55,7 @@ interface Mounted {
 /** Build one host catalog and mount the plugin inside an agent scope. */
 async function mount(config: Config = {}, options: { language?: string; mode?: 'native' | 'code' | 'both'; runtime?: boolean } = {}): Promise<Mounted> {
   const ctx = new Context()
+  await ctx.plugin(LlmRuntime)
   await ctx.plugin(SystemPrompt, {})
   await ctx.plugin(ToolRuntime, { mode: options.mode ?? 'native' })
   if (options.runtime !== false) {
@@ -140,8 +142,9 @@ function directValue(result: Awaited<ReturnType<typeof direct>>) {
 
 describe('dsh-progressive-tools', () => {
   it('declares its exact dependencies, validates config, and mounts globally', async () => {
-    expect(inject).toEqual(['tools', 'systemPrompt'])
+    expect(inject).toEqual(['tools', 'systemPrompt', 'llm'])
     const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
     await ctx.plugin(SystemPrompt, {})
     await ctx.plugin(ToolRuntime, { mode: 'code' })
     await ctx.plugin(FakeRuntime)
@@ -163,14 +166,14 @@ describe('dsh-progressive-tools', () => {
     scope.ctx.tools.presentAs('native')
     const assembly = await ctx.systemPrompt.assemble({ scope: agent })
     expect(assembly.tools.map(tool => tool.name).sort())
-      .toEqual([DESCRIBE_TOOLS_NAME, SEARCH_TOOLS_NAME].sort())
+      .toEqual([DESCRIBE_TOOLS_NAME, INVOKE_TOOL_NAME, SEARCH_TOOLS_NAME].sort())
     await ctx.fiber.dispose()
   })
 
   it('stabilizes Native wire tools and supports direct-first standard calls without code runtime', async () => {
     const mounted = await mount({}, { mode: 'native', runtime: false })
     const assembly = await mounted.ctx.systemPrompt.assemble({ scope: mounted.agent })
-    expect(assembly.tools.map(tool => tool.name).sort()).toEqual([DESCRIBE_TOOLS_NAME, SEARCH_TOOLS_NAME].sort())
+    expect(assembly.tools.map(tool => tool.name).sort()).toEqual([DESCRIBE_TOOLS_NAME, INVOKE_TOOL_NAME, SEARCH_TOOLS_NAME].sort())
     expect(assembly.sections.find(section => section.name === 'tools:progressive-disclosure')?.text)
       .toContain('ordinary tool call')
     expect(mounted.ctx.get('codeRuntime')).toBeUndefined()
@@ -189,6 +192,10 @@ describe('dsh-progressive-tools', () => {
     const described = directValue(await direct(mounted, DESCRIBE_TOOLS_NAME, { names: ['web_search'] })) as Record<string, unknown>
     expect(described).not.toHaveProperty('sdk')
     expect(described).not.toHaveProperty('language')
+    expect(directValue(await direct(mounted, INVOKE_TOOL_NAME, {
+      name: 'web_search',
+      arguments: { query: 'fallback' },
+    }))).toEqual(['fallback'])
   })
 
   it('stabilizes Both wire tools while keeping direct and Code invocation available', async () => {

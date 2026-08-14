@@ -1,7 +1,7 @@
 {
   "name": "dsh-progressive-tools",
   "description": "Standalone direct-first progressive tool disclosure for every DeepSeek Harness presentation mode",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

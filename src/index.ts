@@ -16,14 +16,18 @@ import {
   renderToolsSdkPy,
 } from '@deepseek-ai/dsh-tools'
 import type { JsonSchemaNode, JsonValue, ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { CallId } from '@deepseek-ai/dsh-llm'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
+import { installNativeDeferredBridge } from './native-deferred.ts'
 
 /** Stable model-facing name of the catalog search tool. */
 export const SEARCH_TOOLS_NAME = 'search_tools'
 /** Stable model-facing name of the exact-schema lookup tool. */
 export const DESCRIBE_TOOLS_NAME = 'describe_tools'
+/** Stable fallback transport declared only to non-deferred provider APIs. */
+export const INVOKE_TOOL_NAME = 'invoke_tool'
 
-const DISCOVERY_NAMES = new Set([RUN_CODE_NAME, SEARCH_TOOLS_NAME, DESCRIBE_TOOLS_NAME])
+const DISCOVERY_NAMES = new Set([RUN_CODE_NAME, SEARCH_TOOLS_NAME, DESCRIBE_TOOLS_NAME, INVOKE_TOOL_NAME])
 
 /** Plugin config: every catalog bound and eager declaration is deployment-owned. */
 export interface Config {
@@ -67,7 +71,7 @@ export const Config: z<Config> = z.object({
 /** Cordis plugin name. */
 export const name = 'agent-progressive-tools'
 /** Always-required services; Code runtime is resolved only for Code/Both assembly. */
-export const inject = ['tools', 'systemPrompt']
+export const inject = ['tools', 'systemPrompt', 'llm']
 
 interface ResolvedConfig {
   eagerTools: string[]
@@ -221,7 +225,7 @@ function discoveryInstructions(mode: PresentationMode): string {
   const invocation = mode === 'code'
     ? 'In a later run_code call the returned exact name as tools[exactName](arguments).'
     : mode === 'native'
-      ? 'On a later model step, issue an ordinary tool call using the returned exact name and arguments, even though the stable wire list declares only discovery tools.'
+      ? 'On a later model step, issue an ordinary tool call using the returned exact name and arguments. If this interface declares invoke_tool instead, call invoke_tool with that exact name and arguments.'
       : 'On a later model step, either issue an ordinary tool call using the returned exact name and arguments or call it from run_code as tools[exactName](arguments).'
   return [
     '## Progressive tool disclosure',
@@ -242,6 +246,7 @@ function compactAssembly(
   scope: ScopeKey | undefined,
   eagerTools: readonly string[],
   discoveryDefinitions: readonly ToolDefinition[],
+  invokeDefinition: ToolDefinition,
   recordMode: (scope: ScopeKey | undefined, mode: PresentationMode) => void,
 ): PromptAssembly {
   const sdkIndex = assembly.sections.findIndex(section => section.name === 'tools:sdk' && section.text.trim().length > 0)
@@ -263,6 +268,12 @@ function compactAssembly(
     }
     return sdkSchema(current)
   })
+  if (mode === 'native') {
+    const currentInvoke = ctx.tools.get(invokeDefinition.name, scope)
+    if (currentInvoke !== invokeDefinition) {
+      throw new Error(`dsh-progressive-tools: ${invokeDefinition.name} is unavailable or shadowed in this scope`)
+    }
+  }
   for (const eagerName of eagerTools) {
     const definition = ctx.tools.get(eagerName, scope)
     if (definition === undefined || eagerName === RUN_CODE_NAME) {
@@ -277,6 +288,7 @@ function compactAssembly(
     for (const definition of discoveryDefinitions) directNames.add(definition.name)
     for (const eagerName of eagerTools) directNames.add(eagerName)
   }
+  if (mode === 'native') directNames.add(INVOKE_TOOL_NAME)
   if (mode !== 'native') directNames.add(RUN_CODE_NAME)
   const tools = assembly.tools.filter(tool => directNames.has(tool.name))
 
@@ -435,9 +447,52 @@ export function apply(ctx: Context, config: Config): void {
     }),
   })
 
+  const invokeTool = defineTool({
+    name: INVOKE_TOOL_NAME,
+    description: 'Invoke one exact tool returned by describe_tools when the provider cannot load its schema as a standard tool call.',
+    parameters: {
+      name: { type: 'string', required: true, description: 'Exact tool name returned by describe_tools.' },
+      arguments: { type: 'json', required: true, description: 'Arguments matching that tool\'s exact input schema.' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args, exec) {
+      if (args.name.length === 0) throw new Error('invoke_tool name must not be empty')
+      if (graphemes(args.name).length > resolved.maxToolNameChars) {
+        throw new Error(`invoke_tool name exceeds the configured ${String(resolved.maxToolNameChars)}-character limit`)
+      }
+      const available = new Set(catalog(ctx, exec.agent, omitted).map(tool => tool.name))
+      if (!available.has(args.name)) {
+        throw new Error(`invoke_tool received unknown or unavailable tool ${JSON.stringify(args.name)}`)
+      }
+      const result = await ctx.tools.execute({
+        callId: CallId(`${String(exec.callId)}:invoke`),
+        rootCallId: exec.rootCallId,
+        name: args.name,
+        arguments: args.arguments,
+        ...exec.agent === undefined ? {} : { agent: exec.agent },
+        parent: exec.token,
+        signal: exec.signal,
+      })
+      for (const context of result.additionalContexts ?? []) exec.deferContext(context)
+      if (result.isError) throw new Error(result.error.message)
+      if (result.concludesTurn === true) exec.concludeTurn()
+      return result.value
+    },
+    presentCall: args => ({ card: 'generic', title: `Invoke ${args.name}`, kind: 'execute', rawInput: args.name }),
+  })
+
   ctx.tools.register(searchTool)
   ctx.tools.register(describeTool)
+  ctx.tools.register(invokeTool)
   const definitions = [searchTool, describeTool]
+  installNativeDeferredBridge(ctx, {
+    describe: DESCRIBE_TOOLS_NAME,
+    invoke: INVOKE_TOOL_NAME,
+    progressive: new Set([SEARCH_TOOLS_NAME, DESCRIBE_TOOLS_NAME, INVOKE_TOOL_NAME]),
+  })
   // Prepend makes this listener the outer wrapper for listeners already present;
   // transforming after next() preserves every cooperative inner rewrite.
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
@@ -445,7 +500,7 @@ export function apply(ctx: Context, config: Config): void {
     // A host-plane bundle mount sees agentless administrative assemblies too.
     // They have no presentation mode or execution scope to project.
     if (context.scope === undefined) return assembly
-    return compactAssembly(ctx, assembly, context.scope, resolved.eagerTools, definitions, (scope, mode) => {
+    return compactAssembly(ctx, assembly, context.scope, resolved.eagerTools, definitions, invokeTool, (scope, mode) => {
       if (scope !== undefined) presentationModes.set(scope, mode)
     })
   }, { prepend: true })

@@ -11,7 +11,7 @@ import * as yaml from 'js-yaml'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CodeRuntime } from '@deepseek-ai/dsh-code-runtime'
 import type { CodeRunRequest, CodeRunResult } from '@deepseek-ai/dsh-code-runtime'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { CallId } from '@deepseek-ai/dsh-llm'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -129,6 +129,7 @@ describe('dsh-progressive-tools real Loader composition', () => {
     expect(bundleRows).toEqual([{ id: 'progressive-tools', name: 'dsh-progressive-tools' }])
     await writeFile(configPath, yaml.dump([
       { id: 'system-prompt', name: 'test-system-prompt' },
+      { id: 'llm', name: 'test-llm' },
       { id: 'tools', name: 'test-tools', config: { mode: 'native' } },
       ...bundleRows.map(row => ({ ...row, config: { maxSearchResults: 1 } })),
       { id: 'fixture', name: 'test-fixture' },
@@ -141,6 +142,7 @@ describe('dsh-progressive-tools real Loader composition', () => {
     ctx.loader.builtins.include = Include
     const modules = new Map<string, unknown>([
       ['test-system-prompt', SystemPrompt],
+      ['test-llm', LlmRuntime],
       ['test-tools', ToolRuntime],
       ['dsh-progressive-tools', Discovery],
       ['test-fixture', FixturePlugin],
@@ -163,7 +165,7 @@ describe('dsh-progressive-tools real Loader composition', () => {
     expect(state?.search).toMatchObject({ total: 2, truncated: true, matches: [{ name: 'fixture_weather' }] })
     expect(state?.hidden).toBe('sunny:Paris')
     expect(state?.hasRunCode).toBe(true)
-    expect(state?.nativeWire.toSorted()).toEqual([Discovery.SEARCH_TOOLS_NAME, Discovery.DESCRIBE_TOOLS_NAME].sort())
+    expect(state?.nativeWire.toSorted()).toEqual([Discovery.SEARCH_TOOLS_NAME, Discovery.DESCRIBE_TOOLS_NAME, Discovery.INVOKE_TOOL_NAME].sort())
     expect(state?.bothWire.toSorted()).toEqual([RUN_CODE_NAME, Discovery.SEARCH_TOOLS_NAME, Discovery.DESCRIBE_TOOLS_NAME].sort())
   })
 })

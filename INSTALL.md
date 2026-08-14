@@ -41,7 +41,7 @@ Defaults require no profile edits. To override them, target the bundle-owned row
 
 ## 3. Verify
 
-Start a new session with any Agent preset. Native exposes `search_tools` and `describe_tools`; Code keeps only `run_code` on the wire and exposes the discovery bindings in its compact SDK; Both exposes the stable transports for both paths. Search returns lightweight candidates, and non-eager schemas arrive only through `describe_tools`.
+Start a new session with any Agent preset. Native always exposes `search_tools` and `describe_tools`; APIs without native deferred loading also expose `invoke_tool`, while capable pi-ai Responses/Anthropic models receive disclosed schemas at the describe-result position. Code keeps only `run_code` on the wire and exposes discovery bindings in its compact SDK; Both exposes the stable transports for both paths and does not need `invoke_tool`.
 
 To uninstall:
 
