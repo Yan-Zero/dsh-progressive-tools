@@ -1,11 +1,13 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import Include from '@deepseek-ai/cordis-plugin-include'
+import Include, { applyEntryPatches, entryListSchema } from '@deepseek-ai/cordis-plugin-include'
+import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
+import * as yaml from 'js-yaml'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CodeRuntime } from '@deepseek-ai/dsh-code-runtime'
 import type { CodeRunRequest, CodeRunResult } from '@deepseek-ai/dsh-code-runtime'
@@ -114,21 +116,23 @@ describe('dsh-progressive-tools real Loader composition', () => {
   it('loads independently and projects stable Native, Code, and Both surfaces', async () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-progressive-tools-loader-'))
     const configPath = join(root, 'cordis.yml')
-    await writeFile(configPath, [
-      '- id: system-prompt',
-      "  name: 'test-system-prompt'",
-      '- id: tools',
-      "  name: 'test-tools'",
-      '  config:',
-      '    mode: native',
-      '- id: progressive-tools',
-      '  name: dsh-progressive-tools',
-      '  config:',
-      '    maxSearchResults: 1',
-      '- id: fixture',
-      "  name: 'test-fixture'",
-      '',
-    ].join('\n'))
+    const parsed = yaml.load(
+      await readFile(new URL('../cordis.patch.yml', import.meta.url), 'utf8'),
+      { schema: entryListSchema },
+    )
+    if (!Array.isArray(parsed)) throw new Error('bundle patch must be a top-level array')
+    const warnings: string[] = []
+    const bundleRows = applyEntryPatches([], parsed as PatchOptions[], (message, ...args) => {
+      warnings.push([message, ...args].join(' '))
+    })
+    expect(warnings).toEqual([])
+    expect(bundleRows).toEqual([{ id: 'progressive-tools', name: 'dsh-progressive-tools' }])
+    await writeFile(configPath, yaml.dump([
+      { id: 'system-prompt', name: 'test-system-prompt' },
+      { id: 'tools', name: 'test-tools', config: { mode: 'native' } },
+      ...bundleRows.map(row => ({ ...row, config: { maxSearchResults: 1 } })),
+      { id: 'fixture', name: 'test-fixture' },
+    ], { schema: entryListSchema, noRefs: true }))
 
     const ctx = new Context()
     context = ctx

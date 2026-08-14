@@ -20,8 +20,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown",
     "test": "vitest run",
+    "test:built": "cross-env DSH_EXAMPLE_MODE=lib vitest run tests/loader-composition.spec.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json && vitest run && tsdown",
+    "verify:package": "node scripts/verify-package.mjs",
+    "check": "tsc -p tsconfig.json && tsdown && vitest run && npm run test:built && npm run verify:package",
     "prepublishOnly": "npm run check"
   },
   "exports": {
@@ -76,7 +78,10 @@
     "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
     "@deepseek-ai/dsh-user-approval": "0.1.0-rc.6",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.20.0",
+    "cross-env": "^10.1.0",
+    "js-yaml": "^4.3.1",
     "tsdown": "^0.22.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8"
